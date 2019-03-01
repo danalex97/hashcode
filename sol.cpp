@@ -1,29 +1,33 @@
-#include <iostream>
-#include <set>
-#include <algorithm>
-#include <vector>
 #include <unordered_map>
+#include <iostream>
+#include <vector>
+#include <cstdlib>
+#include <algorithm>
+#include <set>
+#include <iterator>
+#include <unordered_map>
+#include <thread>
 using namespace std;
 
 int n;
 struct photo_t {
 	char t;
 	int x, y;
-	vector<string> tags;
+	vector<int> tags;
 
 	photo_t(char t, int x) {
 		this->t = t;
 		this->x = x;
 		this->y = -1;
-		tags = vector<string>();
+		tags = vector<int>();
 	}
 
 	int dist(photo_t p) {
-		vector<string> v;
+		vector<int> v;
 		set_intersection(
 			tags.begin(), tags.end(),
             p.tags.begin(), p.tags.end(),
-            back_inserter( v )
+            back_inserter(v)
 		);
 
 		int i = v.size();
@@ -34,12 +38,16 @@ struct photo_t {
 	}
 };
 
+int dist(photo_t x, photo_t y) {
+	return x.dist(y);
+}
+
 vector<photo_t> to_horizontal(vector<photo_t> v) {
 	vector<photo_t> res;
 	for (int i = 0; i < v.size(); i += 2) {
 		photo_t p('H', v[i].x);
 
-		set<string> tags;
+		set<int> tags;
 		// put first set of tags
 		for (auto &tag : v[i].tags) {
 			tags.insert(tag);
@@ -79,6 +87,7 @@ vector<photo_t> reorder(vector<photo_t> nodes) {
 
 	vector< vector<int> > dp(1 << n, vector<int>(n, -1));
 	vector< vector<int> > dad(1 << n, vector<int>(n, -2));
+
 	for (int i = 0; i < n; ++i) {
 		dp[1 << i][i] = 0;
 		dad[1 << i][i] = -1;
@@ -129,43 +138,44 @@ vector<photo_t> reorder(vector<photo_t> nodes) {
 }
 
 
-int main() {
-	cin >> n;
-	vector<photo_t> v;
-	vector<photo_t> h;
-	for (int i = 0; i < n; ++i) {
-		int m;
-		char t;
+bool operator < (const photo_t& a, const photo_t& b) {
+  return a.x < b.x;
+}
 
-		cin >> t >> m;
-		photo_t pp(t, i);
+bool operator == (const photo_t& a, const photo_t& b) {
+	return a.x == b.x;
+}
 
-		for (int j = 0; j < m; ++j) {
-			string str;
-			cin >> str;
-			// cout << str << '\n';
-			pp.tags.push_back(str);
+vector< vector<photo_t> > outs;
+vector< set<photo_t> > st;
+
+void group_close(int idx) {
+	photo_t curr = *st[idx].begin();
+	st[idx].erase(st[idx].begin());
+	outs[idx].push_back(curr);
+
+	int count = 0;
+	while (!st[idx].empty()) {
+		count++;
+		photo_t best = curr;
+
+		// take best photo
+		int best_score = -1;
+		for (auto &photo : st[idx]) {
+			int score = dist(photo, curr);
+			if (score > best_score || (score == best_score && photo.tags.size() < best.tags.size())) {
+				best_score = score;
+				best = photo;
+			}
 		}
 
-		sort(pp.tags.begin(), pp.tags.end());
-		if (pp.t == 'H') {
-			h.push_back(pp);
-		} else {
-			v.push_back(pp);
-		}
-	}
+      	st[idx].erase(best);
+    	outs[idx].push_back(best);
+    	curr = best;
+  	}
+}
 
-	for (auto &p : to_horizontal(v)) {
-		h.push_back(p);
-	// 	// for (auto &x: p.tags) {
-	// 	// 	cerr << x << ' ';
-	// 	// }
-	// 	// cerr << '\n';
-	}
-
-
-	// works
-	int group_size = 15;
+vector< vector<photo_t> > make_groups(vector<photo_t> h, int group_size) {
 	vector< vector<photo_t> > groups;
 	vector<photo_t> group;
 	for (auto &x : h) {
@@ -178,11 +188,78 @@ int main() {
 	if (group.size() > 0) {
 		groups.push_back(group);
 	}
+	return groups;
+}
 
-	vector<photo_t> ans;
+int main() {
+	cin >> n;
+	vector<photo_t> v;
+	vector<photo_t> h;
+  	unordered_map<string, int> mp;
+    int str_counter = 0;
+	for (int i = 0; i < n; ++i) {
+		int m;
+		char t;
+
+		cin >> t >> m;
+		photo_t pp(t, i);
+
+		for (int j = 0; j < m; ++j) {
+			string str;
+			cin >> str;
+
+			if (!mp[str]) {
+				mp[str] = ++str_counter;
+			}
+			pp.tags.push_back(mp[str]);
+		}
+
+		sort(pp.tags.begin(), pp.tags.end());
+		if (pp.t == 'H') {
+			h.push_back(pp);
+		} else {
+			v.push_back(pp);
+		}
+	}
+
+	// shuffle inputs
+	random_shuffle(v.begin(), v.end());
+	random_shuffle(h.begin(), h.end());
+
+	// solve vertical
+	for (auto &x : to_horizontal(v)) {
+		h.push_back(x);
+	}
+
+	// group sparse
+	auto groups = make_groups(h, 20000);
+	vector< thread > thds;
+	outs = vector< vector<photo_t> >(groups.size());
+	st = vector< set<photo_t> >(groups.size());
+	int ctr = 0;
 	for (auto &group : groups) {
-		group = reorder(group);
-		for (auto &x : group) {
+		st[ctr] = set<photo_t>(group.begin(), group.end());
+		thds.push_back(thread(group_close, ctr));
+		ctr++;
+	}
+
+	for (auto &t : thds) {
+		t.join();
+		cerr << "> group finished\n";
+	}
+
+	vector<photo_t> phase1;
+	for (auto &g : outs) {
+		for (auto &x : g) {
+			phase1.push_back(x);
+		}
+	}
+
+	cerr << "> phase 2 started\n";
+	// group local
+	vector<photo_t> ans;
+	for (auto &group : make_groups(phase1, 15)) {
+		for (auto &x : reorder(group)) {
 			ans.push_back(x);
 		}
 	}
